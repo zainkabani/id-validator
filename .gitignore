@@ -1,4 +1,6 @@
 resized_images/*.png
+.vscode/
+*.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
