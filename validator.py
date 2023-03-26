@@ -1,51 +1,90 @@
 from datetime import datetime
 import re
-from typing import List, Set
+from typing import List
 from enum import Enum
 
 from cv2 import Mat
 import cv2
 import pytesseract
 from fuzzywuzzy import fuzz
+import face_recognition
 
 from pipeline import Pipeline
 
-ValidationStatus = Enum("ValidationStatus", "COMPLETE PARTIAL_YEAR PARTIAL_NAME FAILED")
-ImageOrientation = Enum("ImageOrientation", "NORMAL CLOCKWISE COUNTER_CLOCKWISE")
+ImageOrientation = Enum(
+    "ImageOrientation", "NORMAL CLOCKWISE COUNTER_CLOCKWISE")
+
+ValidationStates = Enum(
+    "ValidationStates", "COMPLETE PARTIAL FAILED")
+
+
+class ValidationStatus:
+    def __init__(self):
+        self.status = ValidationStates.FAILED
+
+    def __str__(self) -> str:
+        return str(self.status)
+
+    def is_complete(self) -> bool:
+        return self.status == ValidationStates.COMPLETE
+
+    def is_partial(self) -> bool:
+        return self.status == ValidationStates.PARTIAL
+
+    def is_failed(self) -> bool:
+        return self.status == ValidationStates.FAILED
+
+    def update(self, status: ValidationStates):
+        if self.is_complete():
+            return
+        self.status = status
 
 
 class Validator:
-
-    def __init__(self, pipelines: List[Pipeline], img_path: str, file_base_name: str, name: str, dob: datetime):
-        self._initialize_date_things()
-        self._initialize_name_things(name)
+    def __init__(self, pipelines: List[Pipeline], base_name: str, id_path: str, headshot_path: str, name: str, dob: datetime):
+        try:
+            self.id = cv2.imread(id_path)
+        except Exception as e:
+            raise Exception("Error reading id:", e)
+        self.id_rotated_clockwise = cv2.rotate(
+            self.id, cv2.ROTATE_90_CLOCKWISE)
+        self.id_rotated_counter_clockwise = cv2.rotate(
+            self.id, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
         try:
-            self.img = cv2.imread(img_path)
+            self.headshot = cv2.imread(headshot_path)
         except Exception as e:
-            raise Exception("Error reading image:", e)
+            raise Exception("Error reading headshot:", e)
 
-        self.img_rotated_clockwise = cv2.rotate(self.img, cv2.ROTATE_90_CLOCKWISE)
-        self.img_rotated_counter_clockwise = cv2.rotate(self.img, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
-        self.file_base_name = file_base_name
+        self.base_name = base_name
         self.name = name
         self.dob = dob
         self.pipelines = pipelines
-        self.validation_status = ValidationStatus.FAILED
 
-        self.succeeded = {}
-        self.failed: Set[str] = set()
-        pass
+        self._initialize_headshot_things()
+        self._initialize_date_things()
+        self._initialize_name_things()
+
+    def _initialize_headshot_things(self):
+        self.headshot_status = ValidationStatus()
+
+        try:
+            self.headshot_encoding = face_recognition.face_encodings(
+                self.headshot, model="large")[0]
+        except Exception:
+            self.headshot_encoding = None
+            return
 
     def _initialize_date_things(self):
+        self.dob_status = ValidationStatus()
 
         # TODO: Add support for string months (Jan, Feb, etc)
 
         # Regex to find a date in the format of yyyy-mm-dd or mm-dd-yyyy with any separator (space, dash, or slash)
         full_year_numerical_date = r'\b\d{8}\b'
-        last_two_year_digits_numerical_date = r'\b\d{6}\b'
-        date_re = re.compile("(%s|%s)" % (full_year_numerical_date, last_two_year_digits_numerical_date))
+        last_two_year_digits_numerical_date = r'\b\d{6}\b'  # eg. 08-05-76
+        date_re = re.compile("(%s|%s)" % (
+            full_year_numerical_date, last_two_year_digits_numerical_date))
         self.date_re = date_re
 
         # Used to check if the regex matches an expected date pattern
@@ -60,13 +99,11 @@ class Validator:
         valid_date_patterns.append(f'%m%d%y')
         self.valid_date_patterns = valid_date_patterns
 
-        # Used to check if we found a valid year or full date of birth
-        self.is_valid_year: bool = False
-        self.is_valid_full_dob: bool = False
+    def _initialize_name_things(self):
+        self.name_status = ValidationStatus()
 
-    def _initialize_name_things(self, name: str):
         # split the name into parts and remove any strings that are less than 1 character like the "D." John D. Smith
-        self.all_names = [n.strip() for n in name.split(
+        self.all_names = [n.strip() for n in self.name.split(
             " ") if len(n.strip().strip(".")) > 1]
 
         if len(self.all_names) < 2:
@@ -75,10 +112,21 @@ class Validator:
         # Used to check how many of the names we found
         self.found_names = set()
 
-        # Used to check if we found a valid name
-        self.is_valid_name = False
+    def _check_headshot(self, id_image: Mat):
+        if self.headshot_encoding is None:
+            return
+
+        try:
+            id_encoding = face_recognition.face_encodings(
+                id_image, model="large")[0]
+        except Exception:
+            return
+
+        if face_recognition.compare_faces([self.headshot_encoding], id_encoding, tolerance=0.8)[0]:
+            self.headshot_status.update(ValidationStates.COMPLETE)
 
     def _check_name(self, data: str):
+
         # Remove all non-alphabetical characters
         words = re.sub(r'[^a-zA-Z\s]', '', data).split()
 
@@ -90,7 +138,9 @@ class Validator:
 
         # If we found at least two names, we have a valid name
         if len(self.found_names) >= 2:
-            self.is_valid_name = True
+            self.name_status.update(ValidationStates.COMPLETE)
+        elif len(self.found_names) >= 1:
+            self.name_status.update(ValidationStates.COMPLETE)
 
     def _check_dob(self, data: str):
         # Restrict to just numbers
@@ -99,11 +149,10 @@ class Validator:
         # Sometimes we'll read 1979 as 4979 where the year can be the first attribute or the last attribute in the DOB
         # This is a hack to fix that
         if str(self.dob.year)[0] == "1":
-            fuzzy_year = "4" + str(self.dob.year)[1:]
+            fuzzy_year = "4" + str(self.dob.year)[1:]  # eg. 1979 -> 4979
             if fuzzy_year in numerical_data:
                 numerical_data = numerical_data.replace(
                     fuzzy_year, str(self.dob.year))
-                self.is_valid_year = True
 
         matched_dates = []
         matches = self.date_re.findall(numerical_data)
@@ -115,71 +164,91 @@ class Validator:
                 except ValueError:
                     pass
 
+        if str(self.dob.year) in numerical_data:
+            self.dob_status.update(ValidationStates.PARTIAL)
+
         for matched_date in matched_dates:
             if matched_date.year == self.dob.year:
-                self.is_valid_year = True
+                self.dob_status.update(ValidationStates.PARTIAL)
             if matched_date.year == self.dob.year and matched_date.month == self.dob.month and matched_date.day == self.dob.day:
-                self.is_valid_full_dob = True
-
-        if str(self.dob.year) in numerical_data:
-            self.is_valid_year = True
+                self.dob_status.update(ValidationStates.COMPLETE)
 
     def validate(self, orientation: ImageOrientation = ImageOrientation.NORMAL) -> None:
 
-        print(f"Validating {self.file_base_name} with {orientation} orientation...")
+        # print(
+        #     f"Validating {self.base_name} with {orientation} orientation...")
+
+        if orientation == ImageOrientation.NORMAL:
+            current_id = self.id
+        elif orientation == ImageOrientation.CLOCKWISE:
+            current_id = self.id_rotated_clockwise
+        elif orientation == ImageOrientation.COUNTER_CLOCKWISE:
+            current_id = self.id_rotated_counter_clockwise
+        else:
+            raise ValueError("Invalid orientation")
+
+        if not self.headshot_status.is_complete():
+            self._check_headshot(current_id)
+
+        # Skip if we already have a complete validation for name and dob
+        if self.name_status.is_complete() and self.dob_status.is_complete():
+            print('already complete')
+            return
 
         for i, pipeline in enumerate(self.pipelines):
-            if orientation == ImageOrientation.NORMAL:
-                processed_img = pipeline.execute(self.img)
-            elif orientation == ImageOrientation.CLOCKWISE:
-                processed_img = pipeline.execute(self.img_rotated_clockwise)
-            elif orientation == ImageOrientation.COUNTER_CLOCKWISE:
-                processed_img = pipeline.execute(self.img_rotated_counter_clockwise)
-            else:
-                raise ValueError("Invalid orientation")
+            processed_img = pipeline.execute(current_id)
 
             data = pytesseract.image_to_string(processed_img).lower()
 
-            self._check_name(data)
+            if not self.name_status.is_complete():
+                self._check_name(data)
 
-            self._check_dob(data)
+            if not self.dob_status.is_complete():
+                self._check_dob(data)
 
             # print(data)
 
-            # print(self.found_names, self.is_valid_year,
-            #       self.is_valid_full_dob, self.is_valid_name)
+            # print(self.found_names, self.validation_status)
             # print("#" * 100)
 
-            if self.is_valid_full_dob and self.is_valid_name:
-                self.validation_status = ValidationStatus.COMPLETE
-            elif self.is_valid_year and self.is_valid_name:
-                self.validation_status = ValidationStatus.PARTIAL_YEAR
-            elif self.is_valid_full_dob and len(self.found_names) >= 1:
-                self.validation_status = ValidationStatus.PARTIAL_NAME
-
-            if self.validation_status != ValidationStatus.FAILED:
-                print(f"{self.file_base_name} completed ({self.validation_status}) in {i} pipelines")
+            if self.is_valid():
                 return
-
-        print(f"Failed to validate {self.file_base_name} with {orientation}")
         return
 
-    def get_status(self) -> ValidationStatus:
-        return self.validation_status
+    def is_valid(self) -> bool:
+        if self.headshot_status.is_complete():
+            if self.dob_status.is_complete() and self.name_status.is_complete():
+                return True
+            elif self.dob_status.is_partial() and self.name_status.is_complete():
+                return True
+            elif self.dob_status.is_complete() and self.name_status.is_partial():
+                return True
+        return False
 
-    def get_self(self):
-        return self
+    def validation_status_string(self) -> str:
+        return f"HEADSHOT: {self.headshot_status} | DOB: {self.dob_status} | NAME: {self.name_status}"
 
 
-def validate_async(validator: Validator):
+def validate_async(validator: Validator) -> Validator:
+
+    print(
+        f"Validating {validator.base_name}...")
+
     try:
         validator.validate(ImageOrientation.NORMAL)
-        if validator.get_status() == ValidationStatus.FAILED:
+        if not validator.is_valid():
             validator.validate(ImageOrientation.CLOCKWISE)
-        if validator.get_status() == ValidationStatus.FAILED:
+        if not validator.is_valid():
             validator.validate(ImageOrientation.COUNTER_CLOCKWISE)
 
-    except Exception as e:
-        print("Error validating", validator.file_base_name, e)
+        if not validator.is_valid():
+            print(
+                f"Failed to validate {validator.base_name}: {validator.validation_status_string()}")
+        else:
+            print(
+                f"Successfully validated {validator.base_name}: {validator.validation_status_string()}")
 
-    return validator.get_self()
+    except Exception as e:
+        print("Error validating", validator.base_name, e)
+
+    return validator

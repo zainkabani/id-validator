@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 
 
 from pipeline import generate_pipelines
-from validator import ValidationStatus, Validator, validate_async
+from validator import Validator, validate_async
 
 
 def parse_input_file(path: str) -> Tuple[str, datetime]:
@@ -19,38 +19,59 @@ def parse_input_file(path: str) -> Tuple[str, datetime]:
 
 if __name__ == '__main__':
     pipelines = generate_pipelines()
+    print(f"Generated {len(pipelines)} image pre-processing pipelines")
 
     manager = multiprocessing.Manager()
     validators = manager.list()
-
-    print(len(pipelines))
-
     pool = multiprocessing.Pool()
 
-    image_paths = glob.glob(f"images/*.jpg")
-    # image_paths = [f"images/15.jpg"]
-    print("Total images:", len(image_paths))
-    for image_path in image_paths:
-        base_file_name = image_path.split(os.sep)[-1].split(".")[0]
+    validation_statuses: Dict[bool, List[str]] = {}
 
-        input_file_path = f"input_data/{base_file_name}.txt"
+    data_paths = os.listdir("data")
+    # data_paths = ["1"]
 
-        name, dob = parse_input_file(input_file_path)
+    print("Total images:", len(data_paths))
+    for data_path in data_paths:
+        base_name = data_path.split(os.sep)[-1]
+
+        try:
+            id_path = glob.glob(f"data/{data_path}/id.*")[0]
+        except IndexError:
+            print(f"Skipping {data_path} (no id)")
+            validation_statuses[False] = validation_statuses.get(
+                False, []) + [data_path]
+            continue
+
+        try:
+            headshot_path = glob.glob(f"data/{data_path}/headshot.*")[0]
+        except IndexError:
+            print(f"Skipping {data_path} (no headshot)")
+            validation_statuses[False] = validation_statuses.get(
+                False, []) + [data_path]
+            continue
+
+        try:
+            info_path = glob.glob(f"data/{data_path}/info.txt")[0]
+        except IndexError:
+            print(f"Skipping {data_path} (no info)")
+            validation_statuses[False] = validation_statuses.get(
+                False, []) + [data_path]
+            continue
+
+        name, dob = parse_input_file(info_path)
 
         validator = Validator(
-            pipelines[:50], image_path, base_file_name, name, dob)
+            pipelines[:50], base_name, id_path, headshot_path, name, dob)
+        # validator = validate_async(validator)
         pool.apply_async(validate_async, args=(
             validator,), callback=validators.append)
     pool.close()
     pool.join()
 
-    validation_statuses: Dict[ValidationStatus, List[str]] = {}
-
     for validator in validators:
-        current_status = validator.get_status()
+        current_status = validator.is_valid()
         validation_statuses[current_status] = validation_statuses.get(
-            current_status, []) + [validator.file_base_name]
+            current_status, []) + [validator.base_name]
 
-    for status, file_names in validation_statuses.items():
-        for file_name in file_names:
-            print(f"{status} {file_name}")
+    print(f"Valid: {validation_statuses.get(True, [])}")
+    print(f"Invalid: {validation_statuses.get(False, [])}")
