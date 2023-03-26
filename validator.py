@@ -10,17 +10,24 @@ from fuzzywuzzy import fuzz
 
 from pipeline import Pipeline
 
-ValidationStatus = Enum(
-    "ValidationStatus", "COMPLETE PARTIAL_YEAR PARTIAL_NAME FAILED")
+ValidationStatus = Enum("ValidationStatus", "COMPLETE PARTIAL_YEAR PARTIAL_NAME FAILED")
+ImageOrientation = Enum("ImageOrientation", "NORMAL CLOCKWISE COUNTER_CLOCKWISE")
 
 
 class Validator:
 
-    def __init__(self, pipelines: List[Pipeline], img: Mat, file_base_name: str, name: str, dob: datetime):
+    def __init__(self, pipelines: List[Pipeline], img_path: str, file_base_name: str, name: str, dob: datetime):
         self._initialize_date_things()
         self._initialize_name_things(name)
 
-        self.img = img
+        try:
+            self.img = cv2.imread(img_path)
+        except Exception as e:
+            raise Exception("Error reading image:", e)
+
+        self.img_rotated_clockwise = cv2.rotate(self.img, cv2.ROTATE_90_CLOCKWISE)
+        self.img_rotated_counter_clockwise = cv2.rotate(self.img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
         self.file_base_name = file_base_name
         self.name = name
         self.dob = dob
@@ -33,24 +40,24 @@ class Validator:
 
     def _initialize_date_things(self):
 
-        # TODO: Add support for 2 digit years
         # TODO: Add support for string months (Jan, Feb, etc)
 
         # Regex to find a date in the format of yyyy-mm-dd or mm-dd-yyyy with any separator (space, dash, or slash)
-        numerical_date = r'\b\d{8}\b'
-        date_re = re.compile("(%s)" % (numerical_date))
+        full_year_numerical_date = r'\b\d{8}\b'
+        last_two_year_digits_numerical_date = r'\b\d{6}\b'
+        date_re = re.compile("(%s|%s)" % (full_year_numerical_date, last_two_year_digits_numerical_date))
         self.date_re = date_re
 
         # Used to check if the regex matches an expected date pattern
         valid_date_patterns = []
         valid_date_patterns.append(f'%Y%m%d')
-        # valid_date_patterns.append(f'%y%m%d')
+        valid_date_patterns.append(f'%y%m%d')
 
         valid_date_patterns.append(f'%d%m%Y')
-        # valid_date_patterns.append(f'%d%m%y')
+        valid_date_patterns.append(f'%d%m%y')
 
         valid_date_patterns.append(f'%m%d%Y')
-        # valid_date_patterns.append(f'%m%d%y')
+        valid_date_patterns.append(f'%m%d%y')
         self.valid_date_patterns = valid_date_patterns
 
         # Used to check if we found a valid year or full date of birth
@@ -117,12 +124,19 @@ class Validator:
         if str(self.dob.year) in numerical_data:
             self.is_valid_year = True
 
-    def validate(self) -> None:
+    def validate(self, orientation: ImageOrientation = ImageOrientation.NORMAL) -> None:
 
-        print(f"Validating {self.file_base_name}...")
+        print(f"Validating {self.file_base_name} with {orientation} orientation...")
 
-        for pipeline in self.pipelines:
-            processed_img = pipeline.execute(self.img)
+        for i, pipeline in enumerate(self.pipelines):
+            if orientation == ImageOrientation.NORMAL:
+                processed_img = pipeline.execute(self.img)
+            elif orientation == ImageOrientation.CLOCKWISE:
+                processed_img = pipeline.execute(self.img_rotated_clockwise)
+            elif orientation == ImageOrientation.COUNTER_CLOCKWISE:
+                processed_img = pipeline.execute(self.img_rotated_counter_clockwise)
+            else:
+                raise ValueError("Invalid orientation")
 
             data = pytesseract.image_to_string(processed_img).lower()
 
@@ -144,10 +158,11 @@ class Validator:
                 self.validation_status = ValidationStatus.PARTIAL_NAME
 
             if self.validation_status != ValidationStatus.FAILED:
-                print(f"{self.file_base_name} complete: {self.validation_status}")
+                print(f"{self.file_base_name} completed ({self.validation_status}) in {i} pipelines")
                 return
 
-        print(f"Failed to validate", self.file_base_name)
+        print(f"Failed to validate {self.file_base_name} with {orientation}")
+        return
 
     def get_status(self) -> ValidationStatus:
         return self.validation_status
@@ -158,7 +173,12 @@ class Validator:
 
 def validate_async(validator: Validator):
     try:
-        validator.validate()
+        validator.validate(ImageOrientation.NORMAL)
+        if validator.get_status() == ValidationStatus.FAILED:
+            validator.validate(ImageOrientation.CLOCKWISE)
+        if validator.get_status() == ValidationStatus.FAILED:
+            validator.validate(ImageOrientation.COUNTER_CLOCKWISE)
+
     except Exception as e:
         print("Error validating", validator.file_base_name, e)
 
