@@ -122,7 +122,8 @@ class Validator:
         except Exception:
             return
 
-        if face_recognition.compare_faces([self.headshot_encoding], id_encoding, tolerance=0.8)[0]:
+        # Lower tolerance means more strict
+        if face_recognition.compare_faces([self.headshot_encoding], id_encoding, tolerance=0.6)[0]:
             self.headshot_status.update(ValidationStates.COMPLETE)
 
     def _check_name(self, data: str):
@@ -190,12 +191,11 @@ class Validator:
         if not self.headshot_status.is_complete():
             self._check_headshot(current_id)
 
-        # Skip if we already have a complete validation for name and dob
-        if self.name_status.is_complete() and self.dob_status.is_complete():
-            print('already complete')
+        # Skip if we already have validation for name and dob
+        if self.__is_valid_id():
             return
 
-        for i, pipeline in enumerate(self.pipelines):
+        for pipeline in self.pipelines:
             processed_img = pipeline.execute(current_id)
 
             data = pytesseract.image_to_string(processed_img).lower()
@@ -208,22 +208,24 @@ class Validator:
 
             # print(data)
 
-            # print(self.found_names, self.validation_status)
+            # print(self.found_names, self.validation_status_string())
             # print("#" * 100)
 
-            if self.is_valid():
+            if self.__is_valid_id():
                 return
         return
 
-    def is_valid(self) -> bool:
-        if self.headshot_status.is_complete():
-            if self.dob_status.is_complete() and self.name_status.is_complete():
-                return True
-            elif self.dob_status.is_partial() and self.name_status.is_complete():
-                return True
-            elif self.dob_status.is_complete() and self.name_status.is_partial():
-                return True
+    def __is_valid_id(self) -> bool:
+        if self.dob_status.is_complete() and self.name_status.is_complete():
+            return True
+        elif self.dob_status.is_partial() and self.name_status.is_complete():
+            return True
+        elif self.dob_status.is_complete() and self.name_status.is_partial():
+            return True
         return False
+
+    def is_valid(self) -> bool:
+        return self.headshot_status.is_complete() and self.__is_valid_id()
 
     def validation_status_string(self) -> str:
         return f"HEADSHOT: {self.headshot_status} | DOB: {self.dob_status} | NAME: {self.name_status}"
