@@ -8,8 +8,9 @@ import cv2
 import pytesseract
 from fuzzywuzzy import fuzz
 import face_recognition
-
+from pdf2image.pdf2image import convert_from_path
 from pipeline import Pipeline
+import numpy as np
 
 ImageOrientation = Enum(
     "ImageOrientation", "NORMAL CLOCKWISE COUNTER_CLOCKWISE")
@@ -43,7 +44,10 @@ class ValidationStatus:
 class Validator:
     def __init__(self, pipelines: List[Pipeline], base_name: str, id_path: str, headshot_path: str, name: str, dob: datetime):
         try:
-            self.id = cv2.imread(id_path)
+            if id_path.endswith(".pdf"):
+                self.id = np.array(convert_from_path(id_path)[0])
+            else:
+                self.id = cv2.imread(id_path)
         except Exception as e:
             raise Exception("Error reading id:", e)
         self.id_rotated_clockwise = cv2.rotate(
