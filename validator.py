@@ -24,7 +24,7 @@ class ValidationStatus:
         self.status = ValidationStates.FAILED
 
     def __str__(self) -> str:
-        return str(self.status)
+        return str(self.status.name)
 
     def is_complete(self) -> bool:
         return self.status == ValidationStates.COMPLETE

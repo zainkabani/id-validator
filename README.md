@@ -28,3 +28,6 @@ Invalid: ['3']
 Requirements
 ------------
 TODO
+
+```
+brew install cmake tesseract
