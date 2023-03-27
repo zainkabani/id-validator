@@ -78,25 +78,41 @@ class Validator:
     def _initialize_date_things(self):
         self.dob_status = ValidationStatus()
 
-        # TODO: Add support for string months (Jan, Feb, etc)
+        # Regex to find different date formats
+        date_formats = [
+            r"\d{8}", # eg. 19760508
+            r"\d{6}",  # eg. 08-05-76
+            r"\d{2}[a-zA-Z]{3}\d{4}",  # eg. 08May1976
+            r"\d{4}[a-zA-Z]{3}\d{2}",  # eg. 1976May08
+            r"\d{2}[a-zA-Z]{3}\d{2}",  # eg. 08May76 or 76May08
+            r"[a-zA-Z]{3}\d{2}\d{4}",  # eg. May081976
+            r"[a-zA-Z]{3}\d{2}\d{2}",  # eg. May0876
+        ]
 
-        # Regex to find a date in the format of yyyy-mm-dd or mm-dd-yyyy with any separator (space, dash, or slash)
-        full_year_numerical_date = r'\b\d{8}\b'
-        last_two_year_digits_numerical_date = r'\b\d{6}\b'  # eg. 08-05-76
-        date_re = re.compile("(%s|%s)" % (
-            full_year_numerical_date, last_two_year_digits_numerical_date))
+        date_re = re.compile(f"({'|'.join(date_formats)})")
+
         self.date_re = date_re
 
         # Used to check if the regex matches an expected date pattern
         valid_date_patterns = []
-        valid_date_patterns.append(f'%Y%m%d')
-        valid_date_patterns.append(f'%y%m%d')
+        valid_date_patterns.append(f'%Y%m%d') # eg. 19760508
+        valid_date_patterns.append(f'%y%m%d') # eg. 760508
 
-        valid_date_patterns.append(f'%d%m%Y')
-        valid_date_patterns.append(f'%d%m%y')
+        valid_date_patterns.append(f'%d%m%Y') # eg. 08051976
+        valid_date_patterns.append(f'%d%m%y') # eg. 080576
 
-        valid_date_patterns.append(f'%m%d%Y')
-        valid_date_patterns.append(f'%m%d%y')
+        valid_date_patterns.append(f'%m%d%Y') # eg. 05081976
+        valid_date_patterns.append(f'%m%d%y') # eg. 050876
+
+        valid_date_patterns.append(f'%Y%b%d') # eg. 1976May08
+        valid_date_patterns.append(f'%y%b%d') # eg. 76May08
+
+        valid_date_patterns.append(f'%d%b%Y') # eg. 08May1976
+        valid_date_patterns.append(f'%d%b%y') # eg. 08May76
+
+        valid_date_patterns.append(f'%b%d%Y') # eg. May081976
+        valid_date_patterns.append(f'%b%d%y') # eg. May0876 
+
         self.valid_date_patterns = valid_date_patterns
 
     def _initialize_name_things(self):
@@ -145,18 +161,18 @@ class Validator:
 
     def _check_dob(self, data: str):
         # Restrict to just numbers
-        numerical_data = re.sub("[^0-9\n]", "", data)
+        cleaned_data = re.sub("[^0-9a-z\n]", "", data)
 
         # Sometimes we'll read 1979 as 4979 where the year can be the first attribute or the last attribute in the DOB
         # This is a hack to fix that
         if str(self.dob.year)[0] == "1":
             fuzzy_year = "4" + str(self.dob.year)[1:]  # eg. 1979 -> 4979
-            if fuzzy_year in numerical_data:
-                numerical_data = numerical_data.replace(
+            if fuzzy_year in cleaned_data:
+                cleaned_data = cleaned_data.replace(
                     fuzzy_year, str(self.dob.year))
 
         matched_dates = []
-        matches = self.date_re.findall(numerical_data)
+        matches = self.date_re.findall(cleaned_data)
 
         for date_str in matches:
             for pattern in self.valid_date_patterns:
@@ -165,7 +181,7 @@ class Validator:
                 except ValueError:
                     pass
 
-        if str(self.dob.year) in numerical_data:
+        if str(self.dob.year) in cleaned_data:
             self.dob_status.update(ValidationStates.PARTIAL)
 
         for matched_date in matched_dates:

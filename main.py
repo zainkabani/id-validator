@@ -2,6 +2,7 @@ from datetime import datetime
 import os
 import glob
 import multiprocessing
+import time
 from typing import Dict, List, Tuple
 
 
@@ -28,9 +29,11 @@ if __name__ == '__main__':
     validation_statuses: Dict[bool, List[str]] = {}
 
     data_paths = os.listdir("data")
-    # data_paths = ["1"]
+    # data_paths = ["16", "17"]
 
     print("Total images:", len(data_paths))
+
+    start = time.time()
     for data_path in data_paths:
         base_name = data_path.split(os.sep)[-1]
 
@@ -61,12 +64,14 @@ if __name__ == '__main__':
         name, dob = parse_input_file(info_path)
 
         validator = Validator(
-            pipelines[:50], base_name, id_path, headshot_path, name, dob)
+            pipelines[:30], base_name, id_path, headshot_path, name, dob)
         # validator = validate_async(validator)
         pool.apply_async(validate_async, args=(
             validator,), callback=validators.append)
     pool.close()
     pool.join()
+    end = time.time()
+    print(f"{len(data_paths)} players validated in ({end - start}) seconds")
 
     for validator in validators:
         current_status = validator.is_valid()
