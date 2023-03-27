@@ -56,7 +56,10 @@ class Validator:
             self.id, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
         try:
-            self.headshot = cv2.imread(headshot_path)
+            if headshot_path.endswith(".pdf"):
+                self.headshot = np.array(convert_from_path(headshot_path)[0])
+            else:
+                self.headshot = cv2.imread(headshot_path)
         except Exception as e:
             raise Exception("Error reading headshot:", e)
 
