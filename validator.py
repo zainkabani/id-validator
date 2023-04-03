@@ -42,6 +42,27 @@ class ValidationStatus:
 
 
 class Validator:
+
+    # This is common in passports
+    string_month_map = {
+        "janjan": "01",
+        "febfev": "02",
+        "febfév": "02",
+        "marmar": "03",
+        "apravr": "04",
+        "maymai": "05",
+        "junjui": "06",
+        "juljul": "07",
+        "augaoû": "08",
+        "augaou": "08",
+        "sepsep": "09",
+        "sepsept": "09",  # british passport has this instead of sep
+        "octoct": "10",
+        "novnov": "11",
+        "decdec": "12",
+        "decdéc": "12",
+    }
+
     def __init__(self, pipelines: List[Pipeline], base_name: str, id_path: str, headshot_path: str, name: str, dob: datetime):
         try:
             if id_path.endswith(".pdf"):
@@ -87,8 +108,8 @@ class Validator:
 
         # Regex to find different date formats
         date_formats = [
-            r"\d{8}", # eg. 19760508
-            r"\d{6}",  # eg. 08-05-76
+            r"\d{8}",  # eg. 19760508
+            r"\d{6}",  # eg. 080576
             r"\d{2}[a-zA-Z]{3}\d{4}",  # eg. 08May1976
             r"\d{4}[a-zA-Z]{3}\d{2}",  # eg. 1976May08
             r"\d{2}[a-zA-Z]{3}\d{2}",  # eg. 08May76 or 76May08
@@ -102,23 +123,23 @@ class Validator:
 
         # Used to check if the regex matches an expected date pattern
         valid_date_patterns = []
-        valid_date_patterns.append(f'%Y%m%d') # eg. 19760508
-        valid_date_patterns.append(f'%y%m%d') # eg. 760508
+        valid_date_patterns.append(f'%Y%m%d')  # eg. 19760508
+        valid_date_patterns.append(f'%y%m%d')  # eg. 760508
 
-        valid_date_patterns.append(f'%d%m%Y') # eg. 08051976
-        valid_date_patterns.append(f'%d%m%y') # eg. 080576
+        valid_date_patterns.append(f'%d%m%Y')  # eg. 08051976
+        valid_date_patterns.append(f'%d%m%y')  # eg. 080576
 
-        valid_date_patterns.append(f'%m%d%Y') # eg. 05081976
-        valid_date_patterns.append(f'%m%d%y') # eg. 050876
+        valid_date_patterns.append(f'%m%d%Y')  # eg. 05081976
+        valid_date_patterns.append(f'%m%d%y')  # eg. 050876
 
-        valid_date_patterns.append(f'%Y%b%d') # eg. 1976May08
-        valid_date_patterns.append(f'%y%b%d') # eg. 76May08
+        valid_date_patterns.append(f'%Y%b%d')  # eg. 1976May08
+        valid_date_patterns.append(f'%y%b%d')  # eg. 76May08
 
-        valid_date_patterns.append(f'%d%b%Y') # eg. 08May1976
-        valid_date_patterns.append(f'%d%b%y') # eg. 08May76
+        valid_date_patterns.append(f'%d%b%Y')  # eg. 08May1976
+        valid_date_patterns.append(f'%d%b%y')  # eg. 08May76
 
-        valid_date_patterns.append(f'%b%d%Y') # eg. May081976
-        valid_date_patterns.append(f'%b%d%y') # eg. May0876 
+        valid_date_patterns.append(f'%b%d%Y')  # eg. May081976
+        valid_date_patterns.append(f'%b%d%y')  # eg. May0876
 
         self.valid_date_patterns = valid_date_patterns
 
@@ -170,6 +191,13 @@ class Validator:
         # Restrict to just numbers
         cleaned_data = re.sub("[^0-9a-z\n]", "", data)
 
+        for string_month in self.string_month_map:
+            if string_month in cleaned_data:
+                # We need to replace the string month with the number month
+                # but incase we have multiple matches ie. sepsep and sepsept, we need to make a copy so we get every combination
+                cleaned_data += "\n" + cleaned_data.replace(
+                    string_month, self.string_month_map[string_month])
+
         # Sometimes we'll read 1979 as 4979 where the year can be the first attribute or the last attribute in the DOB
         # This is a hack to fix that
         if str(self.dob.year)[0] == "1":
@@ -215,7 +243,7 @@ class Validator:
             self._check_headshot(current_id)
 
         # Skip if we already have validation for name and dob
-        if self.__is_valid_id():
+        if self.is_valid_id():
             return
 
         for pipeline in self.pipelines:
@@ -234,11 +262,11 @@ class Validator:
             # print(self.found_names, self.validation_status_string())
             # print("#" * 100)
 
-            if self.__is_valid_id():
+            if self.is_valid_id():
                 return
         return
 
-    def __is_valid_id(self) -> bool:
+    def is_valid_id(self) -> bool:
         if self.dob_status.is_complete() and self.name_status.is_complete():
             return True
         elif self.dob_status.is_partial() and self.name_status.is_complete():
@@ -248,7 +276,7 @@ class Validator:
         return False
 
     def is_valid(self) -> bool:
-        return self.headshot_status.is_complete() and self.__is_valid_id()
+        return self.headshot_status.is_complete() and self.is_valid_id()
 
     def validation_status_string(self) -> str:
         return f"HEADSHOT: {self.headshot_status} | DOB: {self.dob_status} | NAME: {self.name_status}"
@@ -261,6 +289,7 @@ def validate_async(validator: Validator) -> Validator:
 
     try:
         validator.validate(ImageOrientation.NORMAL)
+        # If we don't have a valid ID, try rotating the image
         if not validator.is_valid():
             validator.validate(ImageOrientation.CLOCKWISE)
         if not validator.is_valid():
