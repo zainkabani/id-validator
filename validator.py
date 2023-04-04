@@ -52,10 +52,13 @@ class Validator:
         "apravr": "04",
         "maymai": "05",
         "junjui": "06",
+        "junejuin": "06",
         "juljul": "07",
+        "julyjuil": "07",
         "augaoû": "08",
         "augaou": "08",
         "sepsep": "09",
+        "septsept": "09",
         "sepsept": "09",  # british passport has this instead of sep
         "octoct": "10",
         "novnov": "11",
@@ -185,7 +188,7 @@ class Validator:
         if len(self.found_names) >= 2:
             self.name_status.update(ValidationStates.COMPLETE)
         elif len(self.found_names) >= 1:
-            self.name_status.update(ValidationStates.COMPLETE)
+            self.name_status.update(ValidationStates.PARTIAL)
 
     def _check_dob(self, data: str):
         # Restrict to just numbers
@@ -195,7 +198,7 @@ class Validator:
             if string_month in cleaned_data:
                 # We need to replace the string month with the number month
                 # but incase we have multiple matches ie. sepsep and sepsept, we need to make a copy so we get every combination
-                cleaned_data += "\n" + cleaned_data.replace(
+                cleaned_data += "\nNEW STUFF\n" + cleaned_data.replace(
                     string_month, self.string_month_map[string_month])
 
         # Sometimes we'll read 1979 as 4979 where the year can be the first attribute or the last attribute in the DOB
@@ -212,7 +215,13 @@ class Validator:
         for date_str in matches:
             for pattern in self.valid_date_patterns:
                 try:
-                    matched_dates.append(datetime.strptime(date_str, pattern))
+                    curr_dt = datetime.strptime(date_str, pattern)
+                    if "%y" in pattern:
+                        # sometimes 2 number years ie. 58 for 1958 will be read as 2058
+                        if curr_dt.year > 2023:
+                            matched_dates.append(
+                                curr_dt.replace(year=curr_dt.year-100))
+                    matched_dates.append(curr_dt)
                 except ValueError:
                     pass
 
