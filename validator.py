@@ -1,6 +1,6 @@
 from datetime import datetime
 import re
-from typing import List
+from typing import List, Dict
 from enum import Enum
 
 from cv2 import Mat
@@ -9,7 +9,7 @@ import pytesseract
 from fuzzywuzzy import fuzz
 import face_recognition
 from pdf2image.pdf2image import convert_from_path
-from pipeline import Pipeline
+from id_validator.pipeline import Pipeline
 import numpy as np
 
 ImageOrientation = Enum(
@@ -42,7 +42,6 @@ class ValidationStatus:
 
 
 class Validator:
-
     # This is common in passports
     string_month_map = {
         "janjan": "01",
@@ -66,7 +65,8 @@ class Validator:
         "decdéc": "12",
     }
 
-    def __init__(self, pipelines: List[Pipeline], base_name: str, id_path: str, headshot_path: str, name: str, dob: datetime):
+    def __init__(self, pipelines: List[Pipeline], base_name: str, id_path: str, headshot_path: str, name: str,
+                 dob: datetime):
         try:
             if id_path.endswith(".pdf"):
                 self.id = np.array(convert_from_path(id_path)[0])
@@ -220,7 +220,7 @@ class Validator:
                         # sometimes 2 number years ie. 58 for 1958 will be read as 2058
                         if curr_dt.year > 2023:
                             matched_dates.append(
-                                curr_dt.replace(year=curr_dt.year-100))
+                                curr_dt.replace(year=curr_dt.year - 100))
                     matched_dates.append(curr_dt)
                 except ValueError:
                     pass
@@ -290,9 +290,17 @@ class Validator:
     def validation_status_string(self) -> str:
         return f"HEADSHOT: {self.headshot_status} | DOB: {self.dob_status} | NAME: {self.name_status}"
 
+    def validation_status_dict(self) -> Dict[str, str]:
+        return {
+            "base_name": f"{self.base_name}",
+            "headshot": f"{self.headshot_status}",
+            "dob": f"{self.dob_status}",
+            "name": f"{self.name_status}",
+            "valid": f"{self.is_valid()}"
+        }
+
 
 def validate_async(validator: Validator) -> Validator:
-
     print(
         f"Validating {validator.base_name}...")
 
